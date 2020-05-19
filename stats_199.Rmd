@@ -1,0 +1,440 @@
+---
+title: "STATS 199"
+author: "Yan Kang, Citina Liang"
+date: "2019/2/10"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Overview
+
+This project is mainly for excercises of text mining on analyzing tweets from celebrities. The example we chose for this project is Donald Trump. Before we starting with the project, we suspect that his tweets will be mainly focus on border wall and government shutdown based on a few past news. 
+
+## Introduction
+
+As the U.S. grows more accustomed to social media, it has started to be incorporated into many aspects of American life, thus, it becomes one of the most effiencnt "weapon" for politicians campianing and communicating with people. One of the most famous example is Donald Trump on Twitter.
+
+After Donald Trump announced his ambition in president election, his Twitter is one of the most important social media he uses to campaigning. We are using the text mining techinque to explore more hidden details in his tweets. For example, the most frequent word he mentioned in his tweets, the sentiment discrepancy between Trump's Android and iPhone tweets.
+ 
+## Procedure
+
+* Data generation
+* Cleaning the generated text and building a Corpus
+* Exploring patterns between words and frequency of words
+* Exploring possible topics in his tweets
+* Advanced analysis on sentiment
+
+## Data Generation
+
+### Data Source
+
+We gathered our data from http://www.trumptwitterarchive.com/archive, which is an open source provides people with up to date Donald Trump's tweets. 
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, include=FALSE}
+library(dplyr)
+library(tm)
+library(qdap)
+library(wordcloud)
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+```
+
+```{r, echo=FALSE, results='hide', include=FALSE, message=FALSE}
+#Read in tweets data, and convert the data as a dataframe.
+url <- 'http://www.trumptwitterarchive.com/data/realdonaldtrump/%s.json'
+
+trump<- map(2015:2019, ~sprintf(url, .x)) %>%
+  map_df(jsonlite::fromJSON, simplifyDataFrame = TRUE) %>%
+  mutate(created_at = parse_date_time(created_at, "a b! d! H!:M!:S! z!* Y!")) %>%
+  tbl_df()
+
+## Select useful varaibles for text mining
+trump <- trump %>% filter(created_at > "2015-6-16") %>% filter(is_retweet == FALSE)
+## Omit varaibles not useful at this time
+trumpdf <- trump %>% select(text, favorite_count, created_at, retweet_count)
+```
+
+### Dataset
+
+We have 13732 tweets and 4 variables including Source of the tweet: Tweets contents (text), Favorite Count (favorite_count), Post time (created_at),Retweet count (retweet_count)
+```{r, echo=FALSE,message=FALSE}
+head(trumpdf) %>% kable() %>% kable_styling()
+```
+
+### Tranforming and steming text
+
+Our second step is to transform the text contents of Trump's tweets. Functions in *tm* library provide us functions to convert text to lower case, remove URLs, remove anything other than English letters or space, and build a corpus based on the words in his tweets.
+
+We have went throuogh the following steps to construct the clean version of the corpus:
+
+1. Build a corpus, and specify the source to be character vectors.
+
+2. convert all text to lower case.
+
+3. remove URLs.
+
+4. remove stopwords.
+
+5. replace contractions (ex."it's" becomes "it is").
+
+6. replace Arabic numbers in words (ex."2" becomes "two").
+
+7. remove anything other than English letters or space.
+
+8. keep a copy to use later as a dictionary for stem completion.
+
+9. stem words.
+
+_Procedures of stemming words by using *stemDocument* function, and use *stemCompletion* function to complete the words._
+_stemming: the process of reducing inflected (or sometimes derived) words to their word stem, base or root form_
+```{r, warning=FALSE, message=FALSE}
+#build a corpus, and specify the source to be character vectors
+myCorpus <- Corpus(VectorSource(trumpdf$text))
+myCorpus <- tm_map(myCorpus, tolower)
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+myCorpus <- tm_map(myCorpus, removeURL)
+myCorpus <- tm_map(myCorpus, removeWords, stopwords("english"))
+myCorpus <- tm_map(myCorpus, replace_contraction)
+myCorpus <- tm_map(myCorpus, replace_number)
+removeNumPunct <- function(x) gsub("[^[:alpha:][:space:]]*", "", x)
+myCorpus <- tm_map(myCorpus, removeNumPunct)
+myCorpus <- tm_map(myCorpus, stemDocument)
+myCorpus <- tm_map(myCorpus, removeWords, c("will", "amp", "just", "get", "very", "the", "now", "can", "thank") )
+# replace ending "i" with "y"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "i |i$", replacement = "y ")
+#correct "peopl" to "people"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "peopl", replacement = "people")
+#correct "hundr" to "hundred"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "hundr", replacement = "hundred")
+#correct "presid" to "president"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "presid", replacement = "president")
+#correct "believ" to "believe"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "believ", replacement = "believe")
+#correct "everyon" to "everyone"
+myCorpus <- tm_map(myCorpus, content_transformer(gsub), pattern = "everyon", replacement = "everyone")
+myCorpusCopy <- myCorpus
+```
+
+After doing a comprehensive research, there is not yet optimal solution to the deficiency of stemmer methods (We have tried snowball stemmer, Dictionary stemmer, Hunspell stemmer, but all result the same), we have to manually change words which are incorrect.
+
+* Here shows the clean version of our corpus:
+```{r, echo=FALSE, message=FALSE}
+inspect(myCorpus[1:10]) %>% kable() %>% kable_styling()
+```
+
+* Term Document Martrix generated from the corpus, The rows are words appeared in the tweets, and the column names are the document names.
+```{r, echo=F, message=FALSE, warning=FALSE}
+tdm <- TermDocumentMatrix(myCorpus)
+tdm %>% inspect() %>% kable() %>% kable_styling()
+```
+
+* Below showing the most frequency words appear at least 700 times in Trump's tweets
+```{r, echo=F, message=FALSE, warning=FALSE}
+findFreqTerms(tdm, lowfreq = 700)
+```
+
+```{r, warning=F, results='hide', message=FALSE, include=FALSE}
+library(graphics)
+library(Rgraphviz)
+library(ggplot2)
+```
+
+
+#### Relationship among words
+```{r, warning=F, results='hide', message=FALSE}
+freq.terms = findFreqTerms(tdm, lowfreq = 800)
+plot(tdm, term = freq.terms, corThreshold = 0.1, weighting = T)
+```
+
+The relationship was calculated based on phi coefficient. We can see the the bonds between each high frequency words. However, there are some overly common words that are shown on the graph. Therefore, we need to exclude those words in our data. Based on the plot, we can barely find any important relationship among words that will help us to determine the top topic that Trump would like to mention. however, we do find that some of his common slogan such as "make america great".
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+term.freq = rowSums(as.matrix(tdm))
+term.freq = subset(term.freq, term.freq >= 500)
+df <- data_frame(term = names(term.freq), freq = term.freq, probability = term.freq/sum(term.freq))
+df <- df[order(-df$freq),]
+df %>% head() %>% kable() %>% kable_styling()
+df <- transform(df, term = reorder(term, freq))
+ggplot(df, aes(x=reorder(term, freq), y=freq)) + 
+  geom_bar(stat = "identity", fill="steelblue") + 
+  labs(x = "Terms", y = "Count", title = "Terms appeared more than 500 times") +
+  coord_flip() + theme_minimal() +
+  theme(axis.text.y = element_text(size=8) )
+```
+
+#### Wordcloud
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+set.seed(375) # to make it reproducible
+m <- as.matrix(tdm)
+wordFreq <- sort(rowSums(m), decreasing=TRUE)
+pal <- brewer.pal(9, "BuGn")
+pal <- pal[-(1:4)]
+grayLevels <- gray( (wordFreq+10) / (max(wordFreq)+10) )
+library(wordcloud)
+wordcloud(words=names(wordFreq), freq=wordFreq, min.freq=200, random.order=F, colors=pal, use.r.layout = T)
+```
+
+Based on the graph, we can see that there are several words that president Trump mentioned a lot. The top mentioned word after we exclude some overly common words is great. As Donald Trump has mentioned so many times that his goal of becoming the president is making America great again. This word make sense to us that he might mentioned numerous times. Also, since we only extract a few hundreds recent tweets from Trump's twitter. It is reasonable that the border wall is a high frequent wall in the graph. Trump even shutdown the government to force congress to aprrove for his decision for building up the border wall. We surprisingly found out that the word "government" and "shutdown" were not high frequent. The word "democrat" also appears so many times that indicate the conflicts between he or republican with democrat.
+
+
+#### Wordcloud with Trump's shape
+```{r, echo=FALSE, message=FALSE}
+# library(devtools)
+# library(wordcloud2)
+# figPath = system.file("dtrump.png",package = "wordcloud2")
+# wf <- wordFreq %>% as.data.frame()
+# wf$word = rownames(wf)
+# names(wf)[1] = "freq"
+# wordcloud2(wf, figPath = figPath, size = 1.5,color = "skyblue")
+```
+
+We also created a wordcloud2 graph that with shiny application. We are able to see how many times a certain waord is mentioned in our data. For example, the word "great" showed 35 times in our data, and the word "border" mentioned 28 times in our data. The color was randomly assigned. We can also make the wordcloud plot into different shape. For example, we can make the plot into a shape of the twitter icon. However, we are not able to knit it out.
+
+
+#### Building a LDA Model
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+dtm <- as.DocumentTermMatrix(tdm)
+rowTotals <- apply(dtm, 1, sum)
+dtm.new <- dtm[rowTotals > 0, ]
+trumpdf.new <- trumpdf[rowTotals > 0, ]
+
+library(topicmodels)
+lda <- LDA(dtm.new, k = 3)
+term <- terms(lda, 7)
+term <- apply(term, MARGIN = 2, paste, collapse = ", ")
+
+library(data.table)
+topics <- topics(lda)
+topics <- data.frame(date = as.IDate(trumpdf.new$created_at[]), topic = topics)
+
+ggplot(topics, aes(date, fill = term[topic])) + geom_density(position = "stack")
+```
+
+We wanted to build a topic model to further investigate our result. And we were able to apply our model to other data. Based on the density plot, there is a peak around the end of Januray. There are a lot of tweets that is about border wall around that time. That might be the fact that trump were insisting about building border wall so that he might mentioned so many times. 
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+library(tidytext)
+library(ggplot2)
+
+AP_topics <- tidy(lda, matrix = "beta")
+
+ap_top_terms <- 
+  AP_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+
+ap_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+
+Here are some core common words for the first LDA model we have set up. We want to try another combination since this one does not really distinguish topics.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+lda <- LDA(dtm.new, k = 2, control = list(seed = 1555))
+
+term <- terms(lda, 8)
+
+term <- apply(term, MARGIN = 2, paste, collapse = ", ")
+
+topics <- topics(lda)
+topics <- data.frame(date = as.IDate(trumpdf.new$created_at[]), topic = topics)
+ggplot(topics, aes(date, fill = term[topic])) + geom_density(position = "stack")
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+lda <- LDA(dtm.new, k = 5, control = list(seed = 1555))
+
+term <- terms(lda, 9)
+
+term <- apply(term, MARGIN = 2, paste, collapse = ", ")
+
+topics <- topics(lda)
+topics <- data.frame(date = as.IDate(trumpdf.new$created_at[]), topic = topics)
+ggplot(topics, aes(date, fill = term[topic])) + geom_density(position = "stack")
+```
+
+We still could not distinguish topics and density curves are pretty similar. We suspect that all Trump's tweets are basically talking similar things that we could not really determine a clear border to determine each topic.
+
+
+#### Clustering method to explore topics
+
+Since topic modeling is inefficient, we wanted to use clustering method to see if that help with identify topics of trump's tweets. 
+
+```{r, echo=FALSE, message=FALSE}
+tdmat <- as.matrix(removeSparseTerms(tdm, sparse = 0.96))
+distMatrix <- dist(scale(tdmat))
+fit <- hclust(distMatrix, method = "ward.D2")
+plot(fit)
+```
+
+There is also no clear topics that we can distinguish. All of them are pretty much talking about the same thing.
+
+
+#### Exploring the tweets with high retweet counts
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# select top retweeted tweets
+selected <- which( trumpdf$retweet_count >= 120000)
+# plot them
+dates <- strptime(trumpdf$created_at, format="%Y-%m-%d")
+plot(x=dates, y=trumpdf$retweet_count, type="l", col="grey",
+xlab="Date", ylab="Times retweeted",  main = "Times retweeted over time")
+colors <- rainbow(10)[1:length(selected)]
+points(dates[selected], trumpdf$retweet_count[selected], pch=19, col=colors)
+
+trump.text <- c("Happy New Year to all, including to \n my many enemies and those who have fought \n me and lost so badly they just \n don't know what to do. Love!",                                        "Such a beautiful and important evening! \n The forgotten man and woman will never be \n forgotten again. We will \n all come together as never before" , "TODAY WE MAKE AMERICA GREAT AGAIN!"                   ,"How long did it take your staff of \n 823 people to think that up--and where are \n your 33,000 emails that you deleted? \n https://t.co/gECLNtQizQ"                                         
+, "Why would Kim Jong-un insult me by calling \n me \"old,\" when I would NEVER call him\n \"short \n and fat?\" Oh well, I try \n so hard to be his friend - and maybe \n someday that will happen!", "#FraudNewsCNN #FNN https://t.co/WYUnHjjUjg", "The media is spending more time doing\n a forensic analysis of \n Melania's speech than the FBI\n  spent on Hillary's emails.", "Despite the constant \n negative press covfefe")
+abline(h = 100000, col="red", lwd=1, lty=2)
+text(dates[selected], trumpdf$retweet_count[selected], trump.text,  cex=.3)
+
+trumpdf$text[selected]
+dates[selected]
+
+```
+
+
+#### Exploring the tweets with high favorite counts
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# select favorite retweeted tweets
+selected <- which(trumpdf$favorite_count >= 370000)
+# plot them
+plot(x=dates, y=trumpdf$favorite_count, type="l", col="grey",
+xlab="Date", ylab="Times favorites", main = "favorites over time")
+colors <- rainbow(10)[1:length(selected)]
+points(dates[selected], trumpdf$favorite_count[selected], pch=19, col=colors)
+trumpdf$text[selected]
+trump.text = c("Such a beautiful and important evening! \n The forgotten man and woman will never be forgotten \n again. We will all come together as \nnever before",                       "TODAY WE MAKE AMERICA GREAT AGAIN!",                                                     "Why would Kim Jong-un\n  insult  me by calling\n me \"old,\" when I \n would NEVER call him\n \"short and fat?\" Oh \n well, I try so hard to be his friend - \n and maybe someday that will happen!",
+"#FraudNewsCNN #FNN \n https://t.co/WYUnHjjUjg",                                                "Peaceful protests are a hallmark of \n our democracy. Even if I don't always agree,\n I recognize the rights \n of people to express their views.", "Merry Christmas!", "No Collusion, No Obstruction,\n Complete and Total EXONERATION. \n KEEP AMERICA GREAT!", "Good Morning, \n Have A Great Day!" )
+abline(h = 3500000, col="red", lwd=1, lty=2)
+text(dates[selected], trumpdf$favorite_count[selected], trump.text,  cex=.3, pos = c(2,1,1,2,1,2,2,2))
+```
+
+According to the two plots above, the retweeted counts and favorite couonts are consistent. The top favorite tweets are pretty identical to the top retweeted tweets. The timeline displays that Trump's tweets have been paid much higher attention than his other tweets before campaign, whcih makes sense.
+
+#### Exploring Trump's followers locations
+
+First, we get access to the Twitter API to extract Trump's followers' location, then we use _geocode_ function provided by 25 contributers on Github and Google API to determine the Latitude and longitude of each location in order to make a plot.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide', include=FALSE}
+library(twitteR)
+library(rtweet)
+create_token(app = "my_app", consumer_key <- "4Jg6tlxXrRzRETeqXntq1Hrzh",
+consumer_secret <- "6uza3L4V3OiTtOeDo2AtK43Drfvjo6XX6dTwxw8niuUCXaXPNF",
+access_token <- "1093655838546288640-0kUkNIM40mFayZUKzM6QFqN2eNdeSl",
+access_secret <- "ApFkyO45sXkxLP4CIACbDBWUSvrP4nvqtJUwADUjTD7nP")
+#consumer_key <- "4Jg6tlxXrRzRETeqXntq1Hrzh"
+#consumer_secret <- "6uza3L4V3OiTtOeDo2AtK43Drfvjo6XX6dTwxw8niuUCXaXPNF"
+#access_token <- "1093655838546288640-0kUkNIM40mFayZUKzM6QFqN2eNdeSl"
+#access_secret <- "ApFkyO45sXkxLP4CIACbDBWUSvrP4nvqtJUwADUjTD7nP"
+#setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+donald <- lookup_users("realDonaldTrump")
+trump_flw <- get_followers("realDonaldTrump", n = 10000)
+user_info <- lookup_users(unique(trump_flw$user_id))
+user_info <- user_info %>% filter(location != "")
+```
+
+```{r, include=FALSE, echo=FALSE, message=FALSE}
+source("https://raw.githubusercontent.com/LucasPuente/geocoding/master/geocode_helpers.R")
+source("https://raw.githubusercontent.com/LucasPuente/geocoding/master/modified_geocode.R")
+geocode_apply<-function(x){
+  geocode(x, source = "google", output = "all", api_key="AIzaSyD3vqMVnCyMx6af_JSeFAHUvPz8iyZgUW0")
+}
+geocode_results<-sapply(user_info$location, geocode_apply, simplify = F)
+```
+
+```{r, echo=FALSE}
+#Only keep locations with "status" = "ok"
+condition_a <- sapply(geocode_results, function(x) x["status"]=="OK")
+geocode_results<-geocode_results[condition_a]
+
+#Only keep locations with one match:
+condition_b <- lapply(geocode_results, lapply, length)
+condition_b2<-sapply(condition_b, function(x) x["results"]=="1")
+geocode_results<-geocode_results[condition_b2]
+
+#Address formatting issues:
+source("https://raw.githubusercontent.com/LucasPuente/geocoding/master/cleaning_geocoded_results.R")
+library(data.table)
+
+#Turn list into a data.frame:
+results_b<-lapply(geocode_results, as.data.frame)
+results_c<-lapply(results_b,function(x) subset(x, select=c("results.formatted_address",
+                                                        "results.geometry.location")))
+#Format thes new data frames:
+results_d<-lapply(results_c,function(x) data.frame(Location=x[1,"results.formatted_address"],
+                                                  lat=x[1,"results.geometry.location"],
+                                                lng=x[2,"results.geometry.location"]))
+#Bind these data frames together:
+results_e<-rbindlist(results_d)
+results_e <- results_e %>% group_by(Location) %>% summarise(followers = n()) %>% 
+  inner_join(results_e, by = "Location") %>% distinct()
+
+country_count <- table(gsub("^.*, ","", results_e$Location)) %>% as.data.frame()
+names(country_count)[1] = "Country"
+country_count
+```
+
+* The table shows the followers' country with frequecy
+
+```{r, message=FALSE}
+library(maps)
+library(ggthemes)
+
+world <- ggplot() +
+  borders("world", colour = "gray85", fill = "gray80") +
+  theme_map() 
+
+map <- world +
+  geom_point(aes(x = lng, y = lat, size = followers),
+             data = results_e, 
+             colour = 'purple', alpha = .5) +
+  scale_size_continuous(range = c(1, 8), 
+                        breaks = c(100, 300, 500, 700, 1000)) +
+  labs(size = 'Followers')
+map
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(leaflet)
+map1 <- leaflet(data = results_e) %>%
+  addTiles() %>%
+  setView(lng = -98.35, lat = 39.50, zoom = 4) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addCircleMarkers(
+    stroke = FALSE, fillOpacity = 0.5
+  )
+map1
+```
+
+Based on the map, trump has more followers from the east than west. Also, there are little followers from Canada and China which make sense, for China that chinese are prohibited to use twitters. Suprisingly, We found that There are no followers from Russia which could be the result of the relationship between Russia and US.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+map2 <- leaflet(data = results_e) %>% addTiles() %>% 
+  addProviderTiles("CartoDB.Positron") %>%
+  addCircleMarkers(
+    lng = ~lng, lat = ~lat, weight = 1,
+    stroke = FALSE, fillOpacity = 0.5,
+    radius = ~followers, popup = ~Location
+   )
+map2
+```
+
+
+### Conclusion
+Based on our findings, for past few weeks. The top things that president Trump talked on twitter was mainly about border wall and American economics. Talking about the American economics, it involved with several other countries that could affect the American economics. 
